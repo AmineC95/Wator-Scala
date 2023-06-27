@@ -1,148 +1,143 @@
-import scalafx.application.{JFXApp3, Platform}
-import scalafx.application.JFXApp3.PrimaryStage
-import scalafx.beans.property.{IntegerProperty, ObjectProperty}
+import scalafx.Includes._
+import scalafx.animation.{KeyFrame, Timeline}
+import scalafx.application.JFXApp3
 import scalafx.scene.Scene
-import scalafx.scene.paint.Color._
+import scalafx.scene.paint.Color
 import scalafx.scene.shape.Rectangle
+import scalafx.util.Duration
 
-import scala.concurrent.Future
-import scala.util.Random
-import scala.concurrent.ExecutionContext.Implicits.global
+abstract class Creature(val energy: Int, val breedTime: Int, val color: Color) {
+  def copy(energy: Int): Creature
+}
+
+case class Tuna(override val energy: Int, tBreed: Int) extends Creature(energy, tBreed, Color.Blue) {
+  def copy(energy: Int): Creature = Tuna(energy, tBreed)
+}
+
+case class Shark(override val energy: Int, sBreed: Int, var starvationTime: Int) extends Creature(energy, sBreed, Color.Red) {
+  def copy(energy: Int): Creature = Shark(energy, sBreed, starvationTime)
+}
 
 object Main extends JFXApp3 {
+  val nTunas = 100
+  val nSharks = 50
+  val sEnergy = 15
+  val sBreed = 20
+  val tBreed = 15
+  var starvationTime = 25
 
-  private val WINDOW_SIZE = 600
-  private val CELL_SIZE = 5
-  private val NUMBER_OF_CELLS = WINDOW_SIZE / CELL_SIZE
-
-  private type Coordinates = (Int, Int)
-  private type Tuna = List[Coordinates]
-  private type Shark = List[(Coordinates, Int)] // (Coordinates, Energy)
-
-  private val nTunas: Int = 1000 // Nombre de thons
-  private val nSharks: Int = 2 // Nombre de requins
-
-  private val tBreed: Int = 15 // Nombre de cycles avant la reproduction des thons
-  private val sBreed: Int = 10 // Nombre de cycles avant la reproduction des requins
-  private val sEnergy: Int = 1 // Barre d'énergie initiale des requins
-
-  private val initialTunas: Tuna = List.fill(nTunas)((Random.nextInt(NUMBER_OF_CELLS), Random.nextInt(NUMBER_OF_CELLS)))
-  private val initialSharks: Shark = List.fill(nSharks)((Random.nextInt(NUMBER_OF_CELLS), Random.nextInt(NUMBER_OF_CELLS)) -> sEnergy)
-
-  private val allCells: List[Rectangle] = drawTunas(initialTunas) ++ drawSharks(initialSharks)
-
-  private def gameLoop(update: () => Unit): Unit =
-    for {
-      _ <- Future {
-        update()
-        Thread.sleep(10)
-      }
-      _ <- Future(gameLoop(update))
-    } yield ()
-
-  private def drawTunas(tunas: Tuna): List[Rectangle] =
-    tunas.map { coordTuna =>
-      new Rectangle {
-        x = coordTuna._1 * CELL_SIZE
-        y = coordTuna._2 * CELL_SIZE
-        width = CELL_SIZE
-        height = CELL_SIZE
-        fill = Blue
-      }
-    }
-
-  private def drawSharks(sharks: Shark): List[Rectangle] =
-    sharks.map { case (coordShark, energy) =>
-      new Rectangle {
-        x = coordShark._1 * CELL_SIZE
-        y = coordShark._2 * CELL_SIZE
-        width = CELL_SIZE
-        height = CELL_SIZE
-        fill = Red
-      }
-    }
-
-  private def isCellFree(x: Int, y: Int, tunas: Tuna, sharks: Shark): Boolean =
-    !tunas.contains((x, y)) && !sharks.map(_._1).contains((x, y))
-
-  private def moveTuna(tuna: Coordinates, tunas: Tuna, sharks: Shark): Coordinates = {
-    val possibleMoves = List(
-      (tuna._1 - 1, tuna._2), // Left
-      (tuna._1 + 1, tuna._2), // Right
-      (tuna._1, tuna._2 - 1), // Up
-      (tuna._1, tuna._2 + 1)  // Down
-    )
-
-    val validMoves = possibleMoves.filter { case (x, y) =>
-      x >= 0 && x < NUMBER_OF_CELLS && y >= 0 && y < NUMBER_OF_CELLS && isCellFree(x, y, tunas, sharks)
-    }
-
-    if (validMoves.nonEmpty) {
-      val randomMove = Random.shuffle(validMoves).head
-      (randomMove._1, randomMove._2)
-    } else {
-      tuna
-    }
-  }
-
-  private def eatTuna(shark: (Coordinates, Int), tunas: Tuna, sharks: Shark): (Coordinates, Int) = {
-    val possibleMoves = List(
-      (shark._1._1 - 1, shark._1._2), // Left
-      (shark._1._1 + 1, shark._1._2), // Right
-      (shark._1._1, shark._1._2 - 1), // Up
-      (shark._1._1, shark._1._2 + 1)  // Down
-    )
-
-    val tunaInNeighborhood = tunas.find { case (x, y) =>
-      possibleMoves.contains((x, y))
-    }
-
-    tunaInNeighborhood match {
-      case Some(tuna) => (tuna, shark._2 + 1)
-      case None => moveTuna(shark._1, tunas, sharks) -> (shark._2 - 1)
-    }
-  }
-
-  private def reproduceTunas(tunas: Tuna, cycle: Int): Tuna =
-    if (cycle % tBreed == 0) tunas.flatMap(tuna => List(tuna, moveTuna(tuna, tunas, Nil)))
-    else tunas
-
-  private def reproduceSharks(sharks: Shark, cycle: Int, tunas: Tuna): Shark =
-    if (cycle % sBreed == 0) sharks.flatMap(shark => List((shark._1, shark._2), eatTuna(shark, tunas, sharks)))
-    else sharks
+  val grid = Array.fill[Option[Creature]](50, 50)(None)
+  var rects = Array.ofDim[Rectangle](50, 50)
 
   override def start(): Unit = {
-    val tunasState = ObjectProperty(initialTunas)
-    val sharksState = ObjectProperty(initialSharks)
-    val frame = IntegerProperty(0)
-
-    frame.onChange {
-      val updatedTunas = reproduceTunas(tunasState.value, frame.value)
-      val updatedSharks = reproduceSharks(sharksState.value, frame.value, updatedTunas)
-      val eatenTunas = updatedTunas.flatMap { tuna =>
-        val (newShark, newSEnergy) = eatTuna((tuna, 0), updatedTunas, updatedSharks)
-        if (newSEnergy <= 0) None else Some((newShark, newSEnergy))
-      }
-
-      tunasState.value = updatedTunas.diff(eatenTunas.map(_._1))
-      sharksState.value = updatedSharks ++ eatenTunas
-    }
-
-    stage = new PrimaryStage {
-      title = "Wator Simulation"
-      width = WINDOW_SIZE
-      height = WINDOW_SIZE
-      scene = new Scene {
-        fill = White
-        content = allCells
-
-        frame.onChange(Platform.runLater {
-          val updatedCells = drawTunas(tunasState.value) ++ drawSharks(sharksState.value)
-          content = updatedCells
-        })
+    stage = new JFXApp3.PrimaryStage {
+      title.value = "WaTor"
+      scene = new Scene(500, 500) {
+        content = for (i <- 0 until 50; j <- 0 until 50) yield {
+          val r = new Rectangle {
+            x = j * 10
+            y = i * 10
+            width = 10
+            height = 10
+            fill = Color.White
+          }
+          rects(i)(j) = r
+          r
+        }
       }
     }
 
-    gameLoop(() => frame.update(frame.value + 1))
+    // Initialize the world with random tunas and sharks
+    for (_ <- 1 to nTunas) {
+      var placed = false
+      while (!placed) {
+        val i = scala.util.Random.nextInt(50)
+        val j = scala.util.Random.nextInt(50)
+        if (grid(i)(j).isEmpty) {
+          grid(i)(j) = Some(Tuna(0, tBreed))
+          rects(i)(j).fill = Color.Blue
+          placed = true
+        }
+      }
+    }
+    for (_ <- 1 to nSharks) {
+      var placed = false
+      while (!placed) {
+        val i = scala.util.Random.nextInt(50)
+        val j = scala.util.Random.nextInt(50)
+        if (grid(i)(j).isEmpty) {
+          grid(i)(j) = Some(Shark(sEnergy, sBreed, starvationTime))
+          rects(i)(j).fill = Color.Red
+          placed = true
+        }
+      }
+    }
+
+    val timeline = new Timeline {
+      cycleCount = Timeline.Indefinite
+      keyFrames = KeyFrame(Duration(500), onFinished = _ => updateWorld())
+    }
+
+    timeline.play()
   }
+
+  def updateWorld(): Unit = {
+    val oldGrid = grid.map(_.clone())
+
+    for (i <- 0 until 50; j <- 0 until 50) {
+      oldGrid(i)(j) match {
+        case Some(tuna: Tuna) =>
+          val possibleMoves = List((i - 1, j), (i, j + 1), (i + 1, j), (i, j - 1), (i - 1, j + 1), (i - 1, j - 1), (i + 1, j + 1), (i + 1, j - 1))
+            .filter { case (x, y) => x >= 0 && x < 50 && y >= 0 && y < 50 && grid(x)(y).isEmpty }
+
+          if (possibleMoves.nonEmpty) {
+            val (newI, newJ) = possibleMoves(scala.util.Random.nextInt(possibleMoves.length))
+            grid(newI)(newJ) = Some(tuna.copy(energy = tuna.energy + 1))
+            rects(newI)(newJ).fill = Color.Blue
+
+            if (tuna.energy >= tuna.tBreed) {
+              grid(i)(j) = Some(tuna.copy(energy = 0))
+              rects(i)(j).fill = Color.Blue
+            } else {
+              grid(i)(j) = None
+              rects(i)(j).fill = Color.White
+            }
+          }
+        case Some(shark: Shark) =>
+          val possibleMoves = List((i - 1, j), (i, j + 1), (i + 1, j), (i, j - 1), (i - 1, j + 1), (i - 1, j - 1), (i + 1, j + 1), (i + 1, j - 1))
+            .filter { case (x, y) => x >= 0 && x < 50 && y >= 0 && y < 50 }
+          val tunaMoves = possibleMoves.filter { case (x, y) => grid(x)(y).exists(_.isInstanceOf[Tuna]) }
+          val emptyMoves = possibleMoves.filter { case (x, y) => grid(x)(y).isEmpty }
+
+          if (tunaMoves.nonEmpty) {
+            val (newI, newJ) = tunaMoves(scala.util.Random.nextInt(tunaMoves.length))
+            grid(newI)(newJ) = Some(shark.copy(energy = shark.energy + 1, starvationTime = starvationTime))
+            rects(newI)(newJ).fill = Color.Red
+
+            // If the shark eats a tuna, it reproduces immediately
+            grid(i)(j) = Some(shark.copy(energy = 0))
+            rects(i)(j).fill = Color.Red
+          } else if (emptyMoves.nonEmpty) {
+            val (newI, newJ) = emptyMoves(scala.util.Random.nextInt(emptyMoves.length))
+            if (shark.starvationTime <= 0) {
+              grid(i)(j) = None
+              rects(i)(j).fill = Color.White
+            } else {
+              grid(newI)(newJ) = Some(shark.copy(starvationTime = shark.starvationTime - 1))
+              rects(newI)(newJ).fill = Color.Red
+              grid(i)(j) = None
+              rects(i)(j).fill = Color.White
+            }
+          } else {
+            grid(i)(j) = None
+            rects(i)(j).fill = Color.White
+          }
+        case _ =>
+      }
+    }
+  }
+}
+
+object WatorApp extends App {
+  Main.main(Array())
 }
